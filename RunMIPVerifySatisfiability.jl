@@ -43,7 +43,10 @@ arg_settings = ArgParseSettings()
         help = "Number of threads"
         arg_type = Int64
         default = 1
-
+    "--set_obj"
+        help = "Set an objective for satisfiability check"
+	arg_type = Bool
+	default = false
 end
 
 # Parse your arguments
@@ -57,6 +60,7 @@ tightening = parsed_args["tightening"]
 timeout_per_node = parsed_args["timeout_per_node"]
 output_file_name = parsed_args["output_file"]
 num_threads = parsed_args["num_threads"]
+set_obj = parsed_args["set_obj"]
 
 Pkg.activate(environment_path)
 
@@ -130,11 +134,12 @@ println("Finished simple solve in: ", time() - start_time)
 property_lines = readlines(property_file_name)
 lower_bounds, upper_bounds = bounds_from_property_file(property_lines, num_inputs, network.lower_bounds, network.upper_bounds)
 
+
 # Propagate bounds using MIPVerify
 # Start timing
 CPUtic()
 
-main_solver = GurobiSolver(Threads=num_threads)
+main_solver = GurobiSolver(Threads=num_threads, BestBdStop= (set_obj ? 0.5 : 0))
 tightening_solver = GurobiSolver(Gurobi.Env(), OutputFlag = 0, TimeLimit=timeout_per_node, Threads=num_threads)
 
 p1 = get_optimization_problem(
@@ -157,7 +162,14 @@ add_output_constraints_from_property_file!(p1.model, p1.output_variable, propert
 
 # Add an objetive of 0 since we're just concerned with feasibility
 # TODO: Find if there's a way to set it to be a feasibility problem that would be more efficient
-@objective(p1.model, Max, 0)
+if set_obj
+   #@objective(p1.model, Min, max(abs(p1.input_variable .- centroid) ./ (upper_bounds .- lower_bounds)))
+   centroid = ( lower_bounds + upper_bounds ) / 2
+   @objective(p1.model, Min, MIPVerify.get_norm(Inf, (p1.input_variable - centroid) / (upper_bounds - lower_bounds)))
+else
+    @objective(p1.model, Max, 0)
+ end
+
 
 # Solve the feasibility problem
 status = solve(p1.model)
