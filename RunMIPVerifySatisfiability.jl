@@ -139,7 +139,7 @@ lower_bounds, upper_bounds = bounds_from_property_file(property_lines, num_input
 # Start timing
 CPUtic()
 
-main_solver = GurobiSolver(Threads=num_threads, BestBdStop= (set_obj ? 0.5 : 0))
+main_solver = GurobiSolver(Threads=num_threads, BestObjStop=(set_obj ? 0.5 : 0))
 tightening_solver = GurobiSolver(Gurobi.Env(), OutputFlag = 0, TimeLimit=timeout_per_node, Threads=num_threads)
 
 p1 = get_optimization_problem(
@@ -153,6 +153,14 @@ p1 = get_optimization_problem(
       )
 
 preprocessing_time = CPUtoc()
+
+# Write to the output file the status, objective value, and elapsed time
+preprocess_file = string(output_file_name, ".preprocess") # add on the .csv
+open(preprocess_file, "w") do f
+       	 write(f,
+       	 string(preprocessing_time), "\n")
+	 close(f)
+end
 
 println("Preprocessing took: ", preprocessing_time)
 
@@ -177,8 +185,14 @@ solve_time = CPUtoc()
 
 if (status == :Infeasible)
       println("Infeasible, UNSAT")
+elseif (status == :InfeasibleOrUnbounded)
+      println("Infeasible or unbounded, UNSAT")
 elseif (status == :Optimal)
       println("Optimal, SAT")
+elseif (status == :UserObjLimit)
+      println("SAT")
+else
+      println("Unknown!")
 end
 
 # Does it keep any of the old objectives???????
@@ -192,9 +206,21 @@ println("Percent preprocessing: ", round(100 * preprocessing_time / (preprocessi
 output_file = string(output_file_name) # add on the .csv
 open(output_file, "w") do f
     # Writeout our results
-    write(f,
-          status == :Infeasible ? "unsat" : "sat", " ",
-          string(preprocessing_time + solve_time), " ",
-          string(preprocessing_time), "\n")
+    if ( status == :Infeasible || status == :InfeasibleOrUnbounded )
+       	 write(f,
+       	 "unsat ", 
+       	 string(preprocessing_time + solve_time), " ",
+       	  "\n")
+    elseif ( status == :Optimal || status == :UserObjLimit )
+       	 write(f,
+       	 "sat ", 
+       	 string(preprocessing_time + solve_time), " ",
+       	  "\n")
+    else
+       	 write(f,
+       	 "unknown ", 
+       	 string(preprocessing_time + solve_time), " ",
+       	  "\n")
+    end
    close(f)
 end
