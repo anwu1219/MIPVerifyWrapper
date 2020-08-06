@@ -81,8 +81,6 @@ using GLPKMathProgInterface
 # You can use your solver of choice
 using Gurobi
 
-
-
 include(string(environment_path, "MIPVerify.jl/src/MIPVerify.jl"))
 MIPVerify.setloglevel!("info")
 

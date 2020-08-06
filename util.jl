@@ -96,6 +96,101 @@ function read_layer(output_dim::Int64, f::IOStream, act = ReLU())
 end
 
 """
+    read_property_file(filename::String)
+
+Read a property file and return: (i) an input set, and (ii) an objective, and
+(iii) a boolean that is true if the objective should be maximized.
+Each line in the property file
+
+For now we assume a hyper-rectangle input set.
+"""
+function read_property_file(filename::String, num_inputs::Int64; lower::Float64=0.0, upper::Float64=1.0)
+
+    # Keep track of the input lower and upper bounds that you accumulate
+    lower_bounds = lower .* ones(num_inputs)
+    upper_bounds = upper .* ones(num_inputs)
+    # Variables and coefficients for objective
+    variables::Vector{Int64} = []
+    coefficients::Vector{Float64} = []
+    maximize_objective = true
+
+    lines = readlines(filename)
+    for line in lines
+        line = replace(line, " "=>"") # Remove spaces
+        if occursin("Maximize", line) || occursin("Minimize", line)
+            println("Objective line: ", line)
+            maximize_objective = line[1:8] == "Maximize" ? true : false
+            expr_string = line[9:end]
+            done = false
+
+            while !done
+				println("Expression string: ", expr_string)
+                plus_index = findfirst("+", expr_string)
+				# You're finished if you've reached the last term (no + left)
+				if (plus_index == nothing)
+					done = true
+					plus_index = length(expr_string) + 1 # If you're on the last term adjust the index appropriately
+				else
+					plus_index = plus_index[1] # inidex into the interval we get back from finidfirst 
+				end
+
+                # Isolate the current term and parse it
+                cur_term = expr_string[1:plus_index-1]
+                loc_y = findfirst("y", cur_term)[1]
+                @assert loc_y != nothing "didn't find a y in this term"
+                coefficient_string = cur_term[1:loc_y-1]
+                if (coefficient_string == "-")
+                    coefficient = -1.0
+                elseif (coefficient_string == "")
+                    coefficient = 1.0
+                else
+                    coefficient = parse(Float64, coefficient_string)
+                end
+                variable = parse(Int64, cur_term[loc_y + 1:end]) + 1 # +1 in index since property file starts indexing from 0
+
+                # Add the coefficient and variable to the list
+                push!(coefficients, coefficient)
+                push!(variables, variable)
+
+                # Update your expr_string to cut off the first term
+                expr_string = expr_string[plus_index+1:end]
+            end
+        elseif occursin("x", line)
+            # Handle each type of comparator
+            if (occursin("<=", line))
+                comparator_index = findfirst("<=", line)
+                x_index = findfirst("x", line)[1]
+                variable_index = parse(Int64, line[x_index+1:comparator_index[1]-1])  # go from after x to before comparator
+                scalar = parse(Float64, line[comparator_index[2]+1:end])
+                upper_bounds[variable_index + 1] = min(upper, scalar) # +1 in index since property file starts indexing from 0
+            elseif (occursin(">=", line))
+                comparator_index = findfirst(">=", line)
+				println(line)
+                x_index = findfirst("x", line)[1]
+                variable_index = parse(Int64, line[x_index+1:comparator_index[1]-1])  # go from after x to before comparator
+                scalar = parse(Float64, line[comparator_index[2]+1:end])
+                lower_bounds[variable_index + 1] = max(lower, scalar) # +1 in index since property file starts indexing from 0
+            elseif (occursin("==", line)) # is it == or =?
+                comparator_index = findfirst("==", line)
+                x_index = findfirst("x", line)[1]
+                variable_index = parse(Int64, line[x_index+1:comparator_index[1]-1]) # go from after x to before comparator
+                scalar = parse(Float64, line[comparator_index[2]+1:end])
+                lower_bounds[variable_index + 1] = max(lower, scalar) # +1 in index since property file starts indexing from 0
+                upper_bounds[variable_index + 1] = min(upper, scalar)
+            else
+                @assert false string("Unrecognized comparator: ", line)
+            end
+        else
+            @assert false string("Unrecognized line in property file: ", line)
+        end
+    end
+
+    # Return the hyperrectangle, the objective, and whether to maximize or minimize
+    return Hyperrectangle(low=lower_bounds, high=upper_bounds), LinearObjective(coefficients, variables), maximize_objective
+end
+
+"""
+
     compute_output(nnet::Network, input::Vector{Float64})
 
 Propagate a given vector through a nnet and compute the output.
@@ -482,4 +577,23 @@ function get_optimization_problem(
     # use the main solver
     JuMP.setsolver(m, solver)
     return OptimizationProblem(m, v_in, v_out)
+end
+
+function parse_mipverify_string(optimizer_string)
+	chunks = split(optimizer_string, "_")
+	backend_optimizer = split(chunks[2], "=")[2]
+	threads = parse(Int64, split(chunks[3], "=")[2])
+	strategy_string = split(chunks[4], "=")[2]
+	preprocess_timeout_per_node = parse(Float64, split(chunks[5], "=")[2])
+
+	if (strategy_string == "ia")
+		strategy = MIPVerify.interval_arithmetic
+	elseif (strategy_string == "lp")
+		strategy = MIPVerify.lp
+	elseif (strategy_string == "mip")
+		strategy = MIPVerify.mip
+	end
+	return backend_optimizer, threads, strategy, preprocess_timeout_per_node
+
+
 end
