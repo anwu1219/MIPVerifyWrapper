@@ -126,7 +126,7 @@ p1 = get_model(
       Gurobi.Optimizer,
       lower_bounds=lower_bounds,
       upper_bounds=upper_bounds,
-      tightening_options=Dict("OutputFlag" => 0, "TimeLimit" => timeout_per_node),
+      tightening_options=Dict("OutputFlag" => 0, "TimeLimit" => timeout_per_node, "Threads" => num_threads),
       tightening_algorithm=strategy
       )
 
@@ -138,8 +138,7 @@ CPUtic()
 add_output_constraints_from_property_file!(p1.model, p1.output_variable, property_lines)
 	    
 set_optimizer(p1.model, Gurobi.Optimizer)
-set_optimizer_attributes(m, Dict("Threads" => 1))
-
+set_optimizer_attributes(p1.model, Dict("Threads" => num_threads)...)
 
 if set_obj
    #@objective(p1.model, Min, max(abs(p1.input_variable .- centroid) ./ (upper_bounds .- lower_bounds)))
