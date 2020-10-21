@@ -44,7 +44,7 @@ function read_nnet(fname::String; last_layer_activation = Id())
         line = readline(f)
     end
     # number of layers
-	println(line)
+	#println(line)
     nlayers, ninputs, noutputs = parse.(Int64, split(line, ",")[1:end-1])
     # read in layer sizes
     layer_sizes = parse.(Int64, split(readline(f), ",")[1:nlayers+1])
@@ -59,14 +59,14 @@ function read_nnet(fname::String; last_layer_activation = Id())
 	means = parse.(Float64, split(readline(f), ",")[1:end-1])
 	ranges = parse.(Float64, split(readline(f), ",")[1:end-1])
 
-	println(means)
-	println(ranges)
-	println(input_lower_bounds)
-	println(input_upper_bounds)
+	#println(means)
+	#println(ranges)
+	#println(input_lower_bounds)
+	#println(input_upper_bounds)
 	normalized_lower = (input_lower_bounds - means[1:ninputs])./ranges[1:ninputs]
 	normalized_upper = (input_upper_bounds - means[1:ninputs])./ranges[1:ninputs]
-	println("Normalized Lower: ", normalized_lower)
-	println("Normalized Upper: ", normalized_upper)
+	#println("Normalized Lower: ", normalized_lower)
+	#println("Normalized Upper: ", normalized_upper)
 
     # i=1 corresponds to the input dimension, so it's ignored
     layers = Layer[read_layer(dim, f) for dim in layer_sizes[2:end-1]]
@@ -217,14 +217,13 @@ function network_to_mipverify_network(network, label="default_label", strategy=M
     for layer in network.layers
 		# Pull out the weights and bias from the layer - push on a linear layer corresponding to this
 		# we transpose to match MIPVerify's convention with num_input x num_ouput weight matrix expected
-        weights = copy(transpose(layer.weights)) # copy to get rid of transpose type
+        weights = Base.copy(transpose(layer.weights)) # copy to get rid of transpose type
         bias = layer.bias
         push!(mipverify_layers, MIPVerify.Linear(weights, bias))
 
 		# For each ReLU layer we push on with a corresponding tightening strategy
         if (layer.activation == ReLU())
 			@debug "Adding ReLU layer to MIPVerify representation"
-			println("Strategy: ", strategy)
 			# The first layer we can just use interval arithmetic
 			if (first_relu_layer)
 				println("Using interval arithmetic on first layer")
@@ -250,19 +249,19 @@ function bounds_from_property_file(property_lines::Array{String, 1},
 	new_lower_bounds = deepcopy(lower_bounds)
 	new_upper_bounds = deepcopy(upper_bounds)
 
-	println(property_lines)
+	#println(property_lines)
 	for line in property_lines
-		println("Line: ", line)
+		#println("Line: ", line)
 		chunks = split(line, " ")
 		start_chunk = chunks[1]
 		# Check if we're looking at an input constraint
 		if (start_chunk[1] == 'x')
-			println(start_chunk)
+			#println(start_chunk)
 			var_index = parse(Int, start_chunk[2:end]) + 1
 			bound_val = parse(Float64, chunks[3])
 
 			if (chunks[2] == ">=")
-				println("Setting lower bound to ", bound_val)
+				#println("Setting lower bound to ", bound_val)
 				# Take the stricter between the network and property file restrictions
 				new_lower_bounds[var_index] = max(lower_bounds[var_index], bound_val)
 			elseif (chunks[2] == "<=")
@@ -289,7 +288,7 @@ end
 function add_output_constraints_from_property_file!(model, output_vars, property_lines)
 
 	for line in property_lines
-		println("Line: ", line)
+		#println("Line: ", line)
 		chunks = split(line, " ")
 		start_chunk = chunks[1]
 		if (start_chunk[1] != 'x')
@@ -316,8 +315,8 @@ function add_output_constraints_from_property_file!(model, output_vars, property
 				variable_index = parse(Int64, variable_string) + 1
 
 				push!(variables, output_vars[variable_index])
-				println("Coefficient: ", coefficient)
-				println("Variable Index: ", variable_index)
+				#println("Coefficient: ", coefficient)
+				#println("Variable Index: ", variable_index)
 			end
 
 			# Add the constraint corresponding to this line
@@ -508,9 +507,9 @@ function interval_map(W::Matrix{N}, l::AbstractVecOrMat, u::AbstractVecOrMat) wh
 end
 
 
-struct OptimizationProblem{T<:Union{JuMP.Variable,JuMP.AffExpr}}
+struct OptimizationProblem{T<:Union{JuMP.VariableRef,JuMP.AffExpr}}
     model::Model
-    input_variable::Array{Variable}
+    input_variable::Array{VariableRef}
     output_variable::Array{<:T}
 end
 
@@ -519,7 +518,7 @@ end
 :param lower_bounds: element-wise lower bounds to input
 :param upper_bounds: element-wise upper bounds to input
 :param set_additional_input_constraints: Function that accepts the
-    input variable (in the form of Array{<:Union{JuMP.Variable,JuMP.AffExpr}})
+    input variable (in the form of Array{<:Union{JuMP.VariableRef,JuMP.AffExpr}})
     and sets any additional constraints. Example function `f` that sets the
     first element of the input to
 
@@ -537,17 +536,14 @@ end
 
 """
 
-function get_optimization_problem(
+function get_model(
     input_size::Tuple{Int},
     nn::MIPVerify.NeuralNet,
-    solver::MathProgBase.SolverInterface.AbstractMathProgSolver;
+    solver;
     lower_bounds::AbstractArray{<:Real} = zeros(input_size),
     upper_bounds::AbstractArray{<:Real} = ones(input_size),
-    set_additional_input_constraints::Function = _ -> nothing,
-    tightening_solver::MathProgBase.SolverInterface.AbstractMathProgSolver = MIPVerify.get_default_tightening_solver(
-        solver,
-    ),
-	summary_file_name::String = "",
+    tightening_options = MIPVerify.get_default_tightening_options(solver),
+    tightening_algorithm::MIPVerify.TighteningAlgorithm = MIPVerify.mip
 )::OptimizationProblem
     @assert(
         size(lower_bounds) == input_size,
@@ -561,21 +557,19 @@ function get_optimization_problem(
         all(lower_bounds .<= upper_bounds),
         "Upper bounds must be element-wise at least the value of the lower bounds"
     )
-    m = Model()
-    # use the solver that we want to use for the bounds tightening
-    JuMP.setsolver(m, tightening_solver)
+    m = Model(optimizer_with_attributes(solver, tightening_options...))
+    m.ext[:MIPVerify] = MIPVerify.MIPVerifyExt(tightening_algorithm)
+	
     input_range = CartesianIndices(input_size)
     # v_in is the variable representing the actual range of input values
     v_in = map(
-        i -> @variable(m, lowerbound = lower_bounds[i], upperbound = upper_bounds[i]),
+        i -> @variable(m, lower_bound = lower_bounds[i], upper_bound = upper_bounds[i]),
         input_range
     )
     # these input constraints need to be set before we feed the bounds
     # forward through the network via the call nn(v_in)
-    set_additional_input_constraints(v_in)
-    v_out = nn(v_in, summary_file_name=summary_file_name)
-    # use the main solver
-    JuMP.setsolver(m, solver)
+    v_out = v_in |> nn
+
     return OptimizationProblem(m, v_in, v_out)
 end
 
